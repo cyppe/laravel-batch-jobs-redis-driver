@@ -1,0 +1,30 @@
+{
+  "name": "cyppe/laravel-batch-jobs-redis-driver",
+  "description": "Redis driver for handling batch jobs in Laravel instead of default mysql table job_batches",
+  "autoload": {
+    "psr-4": {
+      "Cyppe\\LaravelBatchJobsRedisDriver\\": "src/"
+    }
+  },
+  "authors": [
+    {
+      "name": "cyppe",
+      "email": "thomas.andersson@gmail.com"
+    }
+  ],
+  "require": {
+    "php": "^8.0",
+    "illuminate/support": "^10.0",
+    "illuminate/bus": "^10.0",
+    "illuminate/database": "^10.0",
+    "illuminate/redis": "^10.0",
+    "ext-redis": "*"
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "Cyppe\\LaravelBatchJobsRedisDriver\\CustomBusServiceProvider"
+      ]
+    }
+  }
+}
