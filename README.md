@@ -16,7 +16,9 @@ composer require "cyppe/laravel-batch-jobs-redis-driver"
 
 ## Important Configuration
 
-**Before using this Redis driver, you must update your `config/queue.php` configuration.** Set the `database` key under the `batching` section to `'redis'`. Without this adjustment, Laravel will default to using the MySQL driver.
+Before using this Redis driver, you must update your `config/queue.php` configuration.
+
+Set the `database` key under the `batching` section to `'redis'`. Without this adjustment, Laravel will default to using the MySQL driver.
 
 ~~~php
 'batching' => [
