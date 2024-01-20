@@ -132,7 +132,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             if ( $this->acquireLock( $lockKey ) ) {
                 try {
                     if ( $attempts > 2 ) {
-                        Log::info( "Finally got lock. Attempt: " . $attempts );
+                       // Log::info( "Finally got lock. Attempt: " . $attempts );
                     }
                     return $callback();
                 } catch ( \Exception $e ) {
@@ -207,7 +207,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             $batchData['finished_at'] = CarbonImmutable::now()->getTimestamp();
             Redis::set( "batch:$batchId", serialize( $batchData ) );
 
-            Log::debug( "Batch marked as finished: " . $batchId . " with finished_at: " . $batchData['finished_at'] );
+            //Log::debug( "Batch marked as finished: " . $batchId . " with finished_at: " . $batchData['finished_at'] );
         }, 100, 200 );
     }
 
