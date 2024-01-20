@@ -12,7 +12,7 @@ class CustomBusServiceProvider extends BusServiceProvider
     {
         $driver = config('queue.batching.database');
 
-        // Only bind the RedisBatchRepository when 'redis' is the selected driver
+        // Bind the RedisBatchRepository only when 'redis' is the selected driver
         if ($driver === 'redis') {
             $this->app->singleton(
                 BatchRepository::class, function ($app) {
@@ -20,8 +20,9 @@ class CustomBusServiceProvider extends BusServiceProvider
                 return new RedisBatchRepository($factory);
             }
             );
+        } else {
+            // Call the parent method to retain the default behavior
+            parent::registerBatchServices();
         }
-        // If 'redis' is not the driver, do not override the default binding
     }
-
 }
