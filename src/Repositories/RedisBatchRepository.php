@@ -37,19 +37,14 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         // Determine the starting index
         $startIndex = 0;
         if ( $before !== null ) {
-            // Fetch a range of batch IDs surrounding the 'before' value
-            // Adjust the range size as needed for efficiency
             $rangeSize   = 100;
             $allBatchIds = Redis::lrange( 'batches_list', 0, $rangeSize - 1 );
             $beforeIndex = array_search( $before, $allBatchIds );
 
             if ( $beforeIndex !== false ) {
                 $startIndex = $beforeIndex + 1;
-            } else {
-                // TODO:
-                // Handle case where 'before' is not found in the initial range
-                // Consider fetching additional ranges or handling this scenario differently
             }
+            // Handle cases where 'before' is not found or other scenarios
         }
 
         // Calculate the range to fetch
@@ -65,12 +60,16 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             }
         } );
 
-        // Filter, unserialize, and map to Batch objects
-        $batches = array_map( function ( $response ) {
-            return $response ? $this->toBatch( json_decode( $response, true ) ) : null;
-        }, $responses );
+        // Filter, decode, and sort raw batch data
+        $batchesRaw = array_map( fn( $response ) => json_decode( $response, true ), array_filter( $responses ) );
+        uasort( $batchesRaw, function ( $a, $b ) {
+            return $b['created_at'] <=> $a['created_at'];
+        } );
 
-        return array_filter( $batches );
+        // Map sorted data to Batch objects and convert to a sequential array
+        $batches = array_values( array_map( fn( $data ) => $this->toBatch( $data ), $batchesRaw ) );
+
+        return $batches;
     }
 
     public function find( string $batchId )
