@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Repositories;
+namespace Cyppe\LaravelBatchJobsRedisDriver\Repositories;
 
 use Carbon\CarbonImmutable;
 use Closure;
@@ -8,6 +8,7 @@ use DateTimeInterface;
 use Illuminate\Bus\Batch;
 use Illuminate\Bus\BatchFactory;
 use Illuminate\Bus\BatchRepository;
+use Illuminate\Bus\DatabaseBatchRepository;
 use Illuminate\Bus\PendingBatch;
 use Illuminate\Bus\PrunableBatchRepository;
 use Illuminate\Bus\UpdatedBatchJobCounts;
