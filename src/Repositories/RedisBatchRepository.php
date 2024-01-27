@@ -27,48 +27,44 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         $this->factory     = $factory;
     }
 
-    public function get( $limit = 50, $before = null ): array
+    public function get($limit = 50, $before = null): array
     {
-        if ( !Redis::exists( 'batches_list' ) ) {
+        if (!Redis::exists('batches_list')) {
             return [];
         }
 
-        $totalBatches = Redis::llen( 'batches_list' );
+        $totalBatches = Redis::llen('batches_list');
 
-        // Determine the starting index
-        $startIndex = 0;
-        if ( $before !== null ) {
-            $rangeSize   = 100;
-            $allBatchIds = Redis::lrange( 'batches_list', 0, $rangeSize - 1 );
-            $beforeIndex = array_search( $before, $allBatchIds );
+        // If $before is specified, find its index
+        $beforeIndex = $before ? array_search($before, Redis::lrange('batches_list', 0, -1)) : null;
 
-            if ( $beforeIndex !== false ) {
-                $startIndex = $beforeIndex + 1;
-            }
-            // Handle cases where 'before' is not found or other scenarios
+        // Determine the range to fetch
+        if ($beforeIndex !== false && $beforeIndex !== null) {
+            $rangeEnd = $beforeIndex - 1;
+            $startIndex = max($rangeEnd - $limit + 1, 0);
+        } else {
+            $startIndex = max($totalBatches - $limit, 0);
+            $rangeEnd = $totalBatches - 1;
         }
 
-        // Calculate the range to fetch
-        $rangeEnd = min( $startIndex + $limit - 1, $totalBatches - 1 );
-
         // Fetch only the required batch IDs
-        $batchIds = Redis::lrange( 'batches_list', $startIndex, $rangeEnd );
+        $batchIds = Redis::lrange('batches_list', $startIndex, $rangeEnd);
 
         // Use Redis pipeline to bulk fetch batch data
-        $responses = Redis::pipeline( function ( $pipe ) use ( $batchIds ) {
-            foreach ( $batchIds as $batchId ) {
-                $pipe->get( "batch:$batchId" );
+        $responses = Redis::pipeline(function ($pipe) use ($batchIds) {
+            foreach ($batchIds as $batchId) {
+                $pipe->get("batch:$batchId");
             }
-        } );
+        });
 
         // Filter, decode, and sort raw batch data
-        $batchesRaw = array_map( fn( $response ) => json_decode( $response, true ), array_filter( $responses ) );
-        uasort( $batchesRaw, function ( $a, $b ) {
+        $batchesRaw = array_map(fn($response) => json_decode($response, true), array_filter($responses));
+        uasort($batchesRaw, function ($a, $b) {
             return $b['created_at'] <=> $a['created_at'];
-        } );
+        });
 
         // Map sorted data to Batch objects and convert to a sequential array
-        $batches = array_values( array_map( fn( $data ) => $this->toBatch( $data ), $batchesRaw ) );
+        $batches = array_values(array_map(fn($data) => $this->toBatch($data), $batchesRaw));
 
         return $batches;
     }
