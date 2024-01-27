@@ -326,4 +326,13 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
 
         return $totalDeleted;
     }
+
+    /**
+     * Rollback the last database transaction for the connection.
+     *
+     * @return void
+     */
+    public function rollBack()
+    {
+    }
 }
