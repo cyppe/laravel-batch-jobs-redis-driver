@@ -186,7 +186,15 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
                 return new UpdatedBatchJobCounts( 0, 0 );
             }
             $batchData = json_decode( $data, true );
-            $batchData['pending_jobs']--;
+
+            // Check if pending_jobs is greater than 0 before decrementing
+            if ($batchData['pending_jobs'] > 0) {
+                $batchData['pending_jobs']--;
+            } else {
+                // Will remove later - keeping for debug for now to see if it ever happens
+                Log::warning("Attempted to decrement pending_jobs below 0 for batch: " . $batchId);
+            }
+
             Redis::set( "batch:$batchId", json_encode( $batchData ) );
             return new UpdatedBatchJobCounts( $batchData['pending_jobs'], $batchData['failed_jobs'] );
         },                             100, 200 );
