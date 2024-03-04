@@ -70,7 +70,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         // todo: remove this block when potential issue is verified
         foreach ($batchesRaw as $key => $data) {
             if ( ! isset($data['id'])) {
-                $this->debug("RedisBatchRepository - get method - batch['id] is missing");
+                $this->debug("get method - batch['id] is missing");
                 // Optionally, remove the invalid data to avoid further errors
                 //unset($batchesRaw[$key]);
             }
@@ -86,7 +86,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
 
         if (empty($data)) {
             // Return null or handle the case where the batch does not exist
-            $this->debug("RedisBatchRepository - find method - Batch ({$batchId}) does not exist.");
+            $this->debug("find method - Batch ({$batchId}) does not exist.");
 
             return null;
         }
@@ -124,7 +124,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId, $amount) {
             $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
             if (empty($data)) {
-                $this->debug("RedisBatchRepository - incrementTotalJobs method - Batch ({$batchId}) does not exist.");
+                $this->debug("incrementTotalJobs method - Batch ({$batchId}) does not exist.");
 
                 return new UpdatedBatchJobCounts(0, 0);
             }
@@ -142,7 +142,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId, $jobId) {
             $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
             if (empty($data)) {
-                $this->debug("RedisBatchRepository - incrementFailedJobs method - Batch ({$batchId}) does not exist.");
+                $this->debug("incrementFailedJobs method - Batch ({$batchId}) does not exist.");
 
                 return new UpdatedBatchJobCounts(0, 0);
             }
@@ -160,7 +160,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId) {
             $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
             if (empty($data)) {
-                $this->debug("RedisBatchRepository - decrementPendingJobs method - Batch ({$batchId}) does not exist.");
+                $this->debug("decrementPendingJobs method - Batch ({$batchId}) does not exist.");
 
                 return new UpdatedBatchJobCounts(0, 0);
             }
@@ -171,7 +171,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
                 $batchData['pending_jobs']--;
             } else {
                 // Will remove later - keeping for debug for now to see if it ever happens
-                $this->debug("RedisBatchRepository - decrementPendingJobs method - Attempted to decrement pending_jobs below 0 for batch: " . $batchId);
+                $this->debug("decrementPendingJobs method - Attempted to decrement pending_jobs below 0 for batch: " . $batchId);
             }
 
             Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$batchId}", json_encode($batchData));
@@ -186,7 +186,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
 
             if (empty($data)) {
-                $this->debug("RedisBatchRepository - decrementPendingJobs method - Batch ({$batchId}) does not exist.");
+                $this->debug("decrementPendingJobs method - Batch ({$batchId}) does not exist.");
 
                 return;
             }
@@ -202,7 +202,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             $finished_at_str = $finished_at->format('Y-m-d H:i:s');
             $diff_for_humans = $created_at->diffForHumans($finished_at, true, true);
 
-            $this->debug("RedisBatchRepository - markAsFinished method - Batch marked as finished. batch id: " . $batchId . ", batch name: {$batchData['name']}, created at: {$created_at_str}, finished at: {$finished_at_str}. Duration: {$diff_for_humans}.");
+            $this->debug("markAsFinished method - Batch marked as finished. batch id: " . $batchId . ", batch name: {$batchData['name']}, created at: {$created_at_str}, finished at: {$finished_at_str}. Duration: {$diff_for_humans}.");
         }, 200, 200);
     }
 
@@ -222,7 +222,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId) {
             $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
             if (empty($data)) {
-                $this->debug("RedisBatchRepository - cancel method - Batch ({$batchId}) does not exist.");
+                $this->debug("cancel method - Batch ({$batchId}) does not exist.");
 
                 return;
             }
@@ -274,12 +274,12 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             if ($this->acquireLock($lockKey)) {
                 try {
                     if ($attempts > 5) {
-                        $this->debug( "Finally got lock. Attempt: " . $attempts );
+                        $this->debug( "finally got lock. Attempt: " . $attempts );
                     }
 
                     return $callback();
                 } catch (Throwable $e) {
-                    $this->debug("RedisBatchRepository - Error in executeWithLock: " . $e->getMessage());
+                    $this->debug("error in executeWithLock: " . $e->getMessage());
                     throw $e;
                 } finally {
                     $this->releaseLock($lockKey);
@@ -292,7 +292,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             }
         }
 
-        $this->debug("RedisBatchRepository - Unable to acquire lock after ({$attempts}) attempts for key: {$lockKey}");
+        $this->debug("unable to acquire lock after ({$attempts}) attempts for key: {$lockKey}");
         throw new RuntimeException("RedisBatchRepository - Unable to acquire lock for key {$lockKey}");
     }
 
@@ -314,7 +314,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
     protected function toBatch($batch): Batch
     {
         if ( ! isset($batch['id'])) {
-            $this->debug('RedisBatchRepository - toBatch method - Missing batch[id]');
+            $this->debug('toBatch method - Missing batch[id]');
         }
 
         return $this->factory->make(
@@ -342,7 +342,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
 
             if (empty($data)) {
                 Redis::connection(config('queue.batching.redis_connection', 'default'))->lrem('batches_list', 0, $batchId);
-                $this->debug("RedisBatchRepository - pruneBatches method - Batch ({$batchId}) does not exist.");
+                $this->debug("pruneBatches method - Batch ({$batchId}) does not exist.");
                 continue;
             }
 
@@ -375,7 +375,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
     private function debug($message): void
     {
         if (config('queue.batching.debug', false)) {
-            Log::debug($message);
+            Log::debug("RedisBatchRepository: " . $message);
         }
     }
 }
