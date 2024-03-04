@@ -70,7 +70,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         // todo: remove this block when potential issue is verified
         foreach ($batchesRaw as $key => $data) {
             if ( ! isset($data['id'])) {
-                $this->debug("RedisBatchRepository - get method", ['batch' => $data]);
+                $this->debug("RedisBatchRepository - get method - batch['id] is missing");
                 // Optionally, remove the invalid data to avoid further errors
                 //unset($batchesRaw[$key]);
             }
@@ -273,7 +273,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         while ($retryCount > 0) {
             if ($this->acquireLock($lockKey)) {
                 try {
-                    if ($attempts > 2) {
+                    if ($attempts > 5) {
                         $this->debug( "Finally got lock. Attempt: " . $attempts );
                     }
 
@@ -314,7 +314,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
     protected function toBatch($batch): Batch
     {
         if ( ! isset($batch['id'])) {
-            $this->debug('RedisBatchRepository - toBatch method - Missing batch ID', ['batch' => $batch]);
+            $this->debug('RedisBatchRepository - toBatch method - Missing batch[id]');
         }
 
         return $this->factory->make(
