@@ -116,7 +116,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$id}", json_encode($batchData));
         Redis::connection(config('queue.batching.redis_connection', 'default'))->rpush('batches_list', $id); // Add the batch ID to the list
 
-        $this->debug("store method - new batch created with id ({$id})");
+        $this->debug("store method - new batch created with id ({$id}) and name ({$batch->name})");
 
         return $this->find($id);
     }
