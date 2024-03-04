@@ -2,6 +2,7 @@
 
 namespace Cyppe\LaravelBatchJobsRedisDriver\Repositories;
 
+use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Closure;
 use DateTimeInterface;
@@ -15,13 +16,15 @@ use Illuminate\Bus\UpdatedBatchJobCounts;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
+use RuntimeException;
+use Throwable;
 
 class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepository, PrunableBatchRepository
 {
     protected int $lockTimeout;
     protected $factory;
 
-    public function __construct( BatchFactory $factory )
+    public function __construct(BatchFactory $factory)
     {
         $this->lockTimeout = 120;
         $this->factory     = $factory;
@@ -29,7 +32,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
 
     public function get($limit = 50, $before = null): array
     {
-        if (!Redis::connection(config('queue.batching.redis_connection', 'default'))->exists('batches_list')) {
+        if ( ! Redis::connection(config('queue.batching.redis_connection', 'default'))->exists('batches_list')) {
             return [];
         }
 
@@ -40,11 +43,11 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
 
         // Determine the range to fetch
         if ($beforeIndex !== false && $beforeIndex !== null) {
-            $rangeEnd = $beforeIndex - 1;
+            $rangeEnd   = $beforeIndex - 1;
             $startIndex = max($rangeEnd - $limit + 1, 0);
         } else {
             $startIndex = max($totalBatches - $limit, 0);
-            $rangeEnd = $totalBatches - 1;
+            $rangeEnd   = $totalBatches - 1;
         }
 
         // Fetch only the required batch IDs
@@ -53,7 +56,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         // Use Redis pipeline to bulk fetch batch data
         $responses = Redis::connection(config('queue.batching.redis_connection', 'default'))->pipeline(function ($pipe) use ($batchIds) {
             foreach ($batchIds as $batchId) {
-                $pipe->get("batch:$batchId");
+                $pipe->get("batch:{$batchId}");
             }
         });
 
@@ -63,28 +66,39 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             return $b['created_at'] <=> $a['created_at'];
         });
 
-        // Map sorted data to Batch objects and convert to a sequential array
-        $batches = array_values(array_map(fn($data) => $this->toBatch($data), $batchesRaw));
+        // Validation and logging for missing 'id' keys - temporary debug block
+        // todo: remove this block when potential issue is verified
+        foreach ($batchesRaw as $key => $data) {
+            if ( ! isset($data['id'])) {
+                Log::debug("RedisBatchRepository - get method", ['batch' => $data]);
+                // Optionally, remove the invalid data to avoid further errors
+                //unset($batchesRaw[$key]);
+            }
+        }
 
-        return $batches;
+        // Map sorted data to Batch objects and convert to a sequential array
+        return array_values(array_map(fn($data) => $this->toBatch($data), $batchesRaw));
     }
 
-    public function find( string $batchId )
+    public function find(string $batchId)
     {
-        $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get( "batch:$batchId" );
+        $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
 
-        if ( $data === false ) {
+        if (empty($data)) {
             // Return null or handle the case where the batch does not exist
+            Log::debug("RedisBatchRepository - find method - Batch ({$batchId}) does not exist.");
+
             return null;
         }
 
-        $batchData = json_decode( $data, true );
-        return $this->toBatch( $batchData );
+        $batchData = json_decode($data, true);
+
+        return $this->toBatch($batchData);
     }
 
-    public function store( PendingBatch $batch )
+    public function store(PendingBatch $batch)
     {
-        $id = (string)Str::orderedUuid();
+        $id = (string) Str::orderedUuid();
 
         $batchData = [
             'id'             => $id,
@@ -93,243 +107,150 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             'pending_jobs'   => 0,
             'failed_jobs'    => 0,
             'failed_job_ids' => [],
-            'options'        => $this->serialize( $batch->options ?? [] ),
+            'options'        => $this->serialize($batch->options ?? []),
             'created_at'     => time(),
             'cancelled_at'   => null,
             'finished_at'    => null,
         ];
 
-        Redis::connection(config('queue.batching.redis_connection', 'default'))->set( "batch:$id", json_encode( $batchData ) );
-        Redis::connection(config('queue.batching.redis_connection', 'default'))->rpush( 'batches_list', $id ); // Add the batch ID to the list
+        Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$id}", json_encode($batchData));
+        Redis::connection(config('queue.batching.redis_connection', 'default'))->rpush('batches_list', $id); // Add the batch ID to the list
 
-        return $this->find( $id );
+        return $this->find($id);
     }
 
-    public function incrementTotalJobs( string $batchId, int $amount )
+    public function incrementTotalJobs(string $batchId, int $amount)
     {
-        return $this->executeWithLock( "lock:batch:$batchId", function () use ( $batchId, $amount ) {
-            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get( "batch:$batchId" );
-            if ( $data === false ) {
-                Log::error( "Batch not found for incrementTotalJobs: " . $batchId );
-                return new UpdatedBatchJobCounts( 0, 0 );
+        return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId, $amount) {
+            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
+            if (empty($data)) {
+                Log::debug("RedisBatchRepository - incrementTotalJobs method - Batch ({$batchId}) does not exist.");
+
+                return new UpdatedBatchJobCounts(0, 0);
             }
-            $batchData                 = json_decode( $data, true );
-            $batchData['total_jobs']   += $amount;
+            $batchData = json_decode($data, true);
+            $batchData['total_jobs'] += $amount;
             $batchData['pending_jobs'] += $amount;
-            Redis::connection(config('queue.batching.redis_connection', 'default'))->set( "batch:$batchId", json_encode( $batchData ) );
-            return new UpdatedBatchJobCounts( $batchData['pending_jobs'], $batchData['failed_jobs'] );
-        },                             100, 200 );
+            Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$batchId}", json_encode($batchData));
+
+            return new UpdatedBatchJobCounts($batchData['pending_jobs'], $batchData['failed_jobs']);
+        }, 200, 200);
     }
 
-    protected function acquireLock( string $key ): bool
+    public function incrementFailedJobs(string $batchId, string $jobId)
     {
-        $isAcquired = Redis::connection(config('queue.batching.redis_connection', 'default'))->set( $key, true, 'EX', $this->lockTimeout, 'NX' );
-        return (bool)$isAcquired;
-    }
+        return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId, $jobId) {
+            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
+            if (empty($data)) {
+                Log::debug("RedisBatchRepository - incrementFailedJobs method - Batch ({$batchId}) does not exist.");
 
-    protected function executeWithLock( string $lockKey, Closure $callback, $retryCount = 3, $sleepMilliseconds = 100 )
-    {
-        $attempts = 0;
-        while ( $retryCount > 0 ) {
-            if ( $this->acquireLock( $lockKey ) ) {
-                try {
-                    if ( $attempts > 2 ) {
-                        //Log::info( "Finally got lock. Attempt: " . $attempts );
-                    }
-                    return $callback();
-                } catch ( \Throwable $e ) {
-                    Log::error( "Error in executeWithLock: " . $e->getMessage() );
-                    throw $e;
-                } finally {
-                    $this->releaseLock( $lockKey );
-                }
-            } else {
-                //Log::info( "Failed to get lock. Will try again. Attempt: $attempt" );
-                $attempts++;
-                // Failed to acquire lock, decrease retry count and wait
-                $retryCount--;
-                usleep( $sleepMilliseconds * 1000 ); // microseconds
+                return new UpdatedBatchJobCounts(0, 0);
             }
-        }
-
-        Log::warning( "Unable to acquire lock after ({$attempts}) attempts for key: $lockKey" );
-        throw new \RuntimeException( "Unable to acquire lock for key $lockKey" );
-    }
-
-    protected function releaseLock( string $key )
-    {
-        Redis::connection(config('queue.batching.redis_connection', 'default'))->del( $key );
-    }
-
-    public function incrementFailedJobs( string $batchId, string $jobId )
-    {
-        return $this->executeWithLock( "lock:batch:$batchId", function () use ( $batchId, $jobId ) {
-            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get( "batch:$batchId" );
-            if ( $data === false ) {
-                Log::error( "Batch not found for incrementFailedJobs: " . $batchId );
-                return new UpdatedBatchJobCounts( 0, 0 );
-            }
-            $batchData = json_decode( $data, true );
+            $batchData = json_decode($data, true);
             $batchData['failed_jobs']++;
             $batchData['failed_job_ids'][] = $jobId;
-            Redis::connection(config('queue.batching.redis_connection', 'default'))->set( "batch:$batchId", json_encode( $batchData ) );
-            return new UpdatedBatchJobCounts( $batchData['pending_jobs'], $batchData['failed_jobs'] );
-        },                             100, 200 );
+            Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$batchId}", json_encode($batchData));
+
+            return new UpdatedBatchJobCounts($batchData['pending_jobs'], $batchData['failed_jobs']);
+        }, 200, 200);
     }
 
-    public function decrementPendingJobs( string $batchId, string $jobId )
+    public function decrementPendingJobs(string $batchId, string $jobId)
     {
-        return $this->executeWithLock( "lock:batch:$batchId", function () use ( $batchId, $jobId ) {
-            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get( "batch:$batchId" );
-            if ( $data === false ) {
-                Log::error( "Batch not found for decrementPendingJobs: " . $batchId );
-                return new UpdatedBatchJobCounts( 0, 0 );
+        return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId) {
+            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
+            if (empty($data)) {
+                Log::debug("RedisBatchRepository - decrementPendingJobs method - Batch ({$batchId}) does not exist.");
+
+                return new UpdatedBatchJobCounts(0, 0);
             }
-            $batchData = json_decode( $data, true );
+            $batchData = json_decode($data, true);
 
             // Check if pending_jobs is greater than 0 before decrementing
             if ($batchData['pending_jobs'] > 0) {
                 $batchData['pending_jobs']--;
             } else {
                 // Will remove later - keeping for debug for now to see if it ever happens
-                Log::warning("Attempted to decrement pending_jobs below 0 for batch: " . $batchId);
+                Log::debug("RedisBatchRepository - decrementPendingJobs method - Attempted to decrement pending_jobs below 0 for batch: " . $batchId);
             }
 
-            Redis::connection(config('queue.batching.redis_connection', 'default'))->set( "batch:$batchId", json_encode( $batchData ) );
-            return new UpdatedBatchJobCounts( $batchData['pending_jobs'], $batchData['failed_jobs'] );
-        },                             100, 200 );
+            Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$batchId}", json_encode($batchData));
+
+            return new UpdatedBatchJobCounts($batchData['pending_jobs'], $batchData['failed_jobs']);
+        }, 200, 200);
     }
 
-
-    public function markAsFinished( string $batchId )
+    public function markAsFinished(string $batchId)
     {
-        return $this->executeWithLock( "lock:batch:$batchId", function () use ( $batchId ) {
-            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get( "batch:$batchId" );
+        return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId) {
+            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
 
-            if ( $data === false ) {
-                Log::debug( "Batch not found for markAsFinished: " . $batchId );
+            if (empty($data)) {
+                Log::debug("RedisBatchRepository - decrementPendingJobs method - Batch ({$batchId}) does not exist.");
+
                 return;
             }
 
-            $batchData = json_decode( $data, true );
+            $batchData = json_decode($data, true);
             // Convert finished_at to a Unix timestamp before storing
             $batchData['finished_at'] = CarbonImmutable::now()->getTimestamp();
-            Redis::connection(config('queue.batching.redis_connection', 'default'))->set( "batch:$batchId", json_encode( $batchData ) );
+            Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$batchId}", json_encode($batchData));
 
-            Log::debug( "Batch marked as finished: " . $batchId . " with finished_at: " . $batchData['finished_at'] );
-        },                             100, 200 );
+            $created_at      = Carbon::createFromTimestamp($batchData['created_at']);
+            $finished_at     = Carbon::createFromTimestamp($batchData['finished_at']);
+            $created_at_str  = $created_at->format('Y-m-d H:i:s');
+            $finished_at_str = $finished_at->format('Y-m-d H:i:s');
+            $diff_for_humans = $created_at->diffForHumans($finished_at, true, true);
+
+            Log::debug("RedisBatchRepository - markAsFinished method - Batch marked as finished. batch id: " . $batchId . ", batch name: {$batchData['name']}, created at: {$created_at_str}, finished at: {$finished_at_str}. Duration: {$diff_for_humans}.");
+        }, 200, 200);
     }
 
-
-    public function delete( string $batchId )
+    public function delete(string $batchId)
     {
-        if ( !Redis::connection(config('queue.batching.redis_connection', 'default'))->exists( "batch:$batchId" ) ) {
+        if ( ! Redis::connection(config('queue.batching.redis_connection', 'default'))->exists("batch:{$batchId}")) {
             // Handle the case where the batch does not exist
             return;
         }
 
-        Redis::connection(config('queue.batching.redis_connection', 'default'))->del( "batch:$batchId" );
-        Redis::connection(config('queue.batching.redis_connection', 'default'))->lrem( 'batches_list', 0, $batchId );
+        Redis::connection(config('queue.batching.redis_connection', 'default'))->del("batch:{$batchId}");
+        Redis::connection(config('queue.batching.redis_connection', 'default'))->lrem('batches_list', 0, $batchId);
     }
 
-    protected function serialize( $value )
+    public function cancel(string $batchId)
     {
-        return serialize( $value );
-    }
+        $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId) {
+            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
+            if (empty($data)) {
+                Log::debug("RedisBatchRepository - cancel method - Batch ({$batchId}) does not exist.");
 
-    protected function unserialize( $serialized )
-    {
-        return unserialize( $serialized );
-    }
-
-    protected function toBatch( $batch ): Batch
-    {
-        return $this->factory->make(
-            $this,
-            $batch['id'],
-            $batch['name'],
-            (int)$batch['total_jobs'],
-            (int)$batch['pending_jobs'],
-            (int)$batch['failed_jobs'],
-            $batch['failed_job_ids'],
-            $this->unserialize( $batch['options'] ),
-            CarbonImmutable::createFromTimestamp( $batch['created_at'] ),
-            isset( $batch['cancelled_at'] ) ? CarbonImmutable::createFromTimestamp( $batch['cancelled_at'] ) : null,
-            isset( $batch['finished_at'] ) ? CarbonImmutable::createFromTimestamp( $batch['finished_at'] ) : null
-        );
-    }
-
-    public function cancel( string $batchId )
-    {
-        $this->executeWithLock( "lock:batch:$batchId", function () use ( $batchId ) {
-            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get( "batch:$batchId" );
-            if ( $data === false ) {
                 return;
             }
-            $batchData = json_decode( $data, true );
+            $batchData = json_decode($data, true);
             // Convert cancelled_at to a Unix timestamp before storing
             $batchData['cancelled_at'] = CarbonImmutable::now()->getTimestamp();
-            Redis::connection(config('queue.batching.redis_connection', 'default'))->set( "batch:$batchId", json_encode( $batchData ) );
-        },                      100, 200 ); // Retry 100 times with 200 milliseconds between retries
+            Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$batchId}", json_encode($batchData));
+        }, 200, 200);
     }
 
-    public function transaction( Closure $callback )
+    public function transaction(Closure $callback)
     {
         return $callback();
     }
 
-    public function prune( DateTimeInterface $before )
+    public function prune(DateTimeInterface $before)
     {
-        return $this->pruneBatches( $before, true );
+        return $this->pruneBatches($before, true);
     }
 
-    public function pruneUnfinished( DateTimeInterface $before )
+    public function pruneUnfinished(DateTimeInterface $before)
     {
-        return $this->pruneBatches( $before, false, false );
+        return $this->pruneBatches($before, false, false);
     }
 
-    public function pruneCancelled( DateTimeInterface $before )
+    public function pruneCancelled(DateTimeInterface $before)
     {
-        return $this->pruneBatches( $before, null, true );
-    }
-
-    protected function pruneBatches( DateTimeInterface $before, $isFinished = null, $isCancelled = false )
-    {
-        $batchIds     = Redis::connection(config('queue.batching.redis_connection', 'default'))->lrange( 'batches_list', 0, -1 );
-        $totalDeleted = 0;
-
-        foreach ( $batchIds as $batchId ) {
-            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get( "batch:$batchId" );
-
-            if ( $data === false ) {
-                Redis::connection(config('queue.batching.redis_connection', 'default'))->lrem( 'batches_list', 0, $batchId );
-                continue;
-            }
-
-            $batchData = json_decode( $data, true );
-
-            $shouldBeDeleted = false;
-
-            $createdAt   = CarbonImmutable::createFromTimestamp( $batchData['created_at'] );
-            $finishedAt  = isset( $batchData['finished_at'] ) ? CarbonImmutable::createFromTimestamp( $batchData['finished_at'] ) : null;
-            $cancelledAt = isset( $batchData['cancelled_at'] ) ? CarbonImmutable::createFromTimestamp( $batchData['cancelled_at'] ) : null;
-
-            if ( $isFinished === true && $finishedAt && $finishedAt < $before ) {
-                $shouldBeDeleted = true;
-            } elseif ( $isFinished === false && !$finishedAt && $createdAt < $before ) {
-                $shouldBeDeleted = true;
-            } elseif ( $isCancelled && $cancelledAt && $createdAt < $before ) {
-                $shouldBeDeleted = true;
-            }
-
-            if ( $shouldBeDeleted ) {
-                Redis::connection(config('queue.batching.redis_connection', 'default'))->del( "batch:$batchId" );
-                Redis::connection(config('queue.batching.redis_connection', 'default'))->lrem( 'batches_list', 0, $batchId );
-                $totalDeleted++;
-            }
-        }
-
-        return $totalDeleted;
+        return $this->pruneBatches($before, null, true);
     }
 
     /**
@@ -337,7 +258,118 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
      *
      * @return void
      */
-    public function rollBack()
+    public function rollBack() {}
+
+    protected function acquireLock(string $key): bool
     {
+        $isAcquired = Redis::connection(config('queue.batching.redis_connection', 'default'))->set($key, true, 'EX', $this->lockTimeout, 'NX');
+
+        return (bool) $isAcquired;
+    }
+
+    protected function executeWithLock(string $lockKey, Closure $callback, $retryCount = 3, $sleepMilliseconds = 100)
+    {
+        $attempts = 0;
+        while ($retryCount > 0) {
+            if ($this->acquireLock($lockKey)) {
+                try {
+                    if ($attempts > 2) {
+                        //Log::info( "Finally got lock. Attempt: " . $attempts );
+                    }
+
+                    return $callback();
+                } catch (Throwable $e) {
+                    Log::debug("RedisBatchRepository - Error in executeWithLock: " . $e->getMessage());
+                    throw $e;
+                } finally {
+                    $this->releaseLock($lockKey);
+                }
+            } else {
+                //Log::info( "Failed to get lock. Will try again. Attempt: $attempt" );
+                $attempts++;
+                // Failed to acquire lock, decrease retry count and wait
+                $retryCount--;
+                usleep($sleepMilliseconds * 1000); // microseconds
+            }
+        }
+
+        Log::debug("RedisBatchRepository - Unable to acquire lock after ({$attempts}) attempts for key: {$lockKey}");
+        throw new RuntimeException("RedisBatchRepository - Unable to acquire lock for key {$lockKey}");
+    }
+
+    protected function releaseLock(string $key)
+    {
+        Redis::connection(config('queue.batching.redis_connection', 'default'))->del($key);
+    }
+
+    protected function serialize($value)
+    {
+        return serialize($value);
+    }
+
+    protected function unserialize($serialized)
+    {
+        return unserialize($serialized);
+    }
+
+    protected function toBatch($batch): Batch
+    {
+        if ( ! isset($batch['id'])) {
+            Log::debug('RedisBatchRepository - toBatch method - Missing batch ID', ['batch' => $batch]);
+        }
+
+        return $this->factory->make(
+            $this,
+            $batch['id'],
+            $batch['name'],
+            (int) $batch['total_jobs'],
+            (int) $batch['pending_jobs'],
+            (int) $batch['failed_jobs'],
+            $batch['failed_job_ids'],
+            $this->unserialize($batch['options']),
+            CarbonImmutable::createFromTimestamp($batch['created_at']),
+            isset($batch['cancelled_at']) ? CarbonImmutable::createFromTimestamp($batch['cancelled_at']) : null,
+            isset($batch['finished_at']) ? CarbonImmutable::createFromTimestamp($batch['finished_at']) : null
+        );
+    }
+
+    protected function pruneBatches(DateTimeInterface $before, $isFinished = null, $isCancelled = false)
+    {
+        $batchIds     = Redis::connection(config('queue.batching.redis_connection', 'default'))->lrange('batches_list', 0, -1);
+        $totalDeleted = 0;
+
+        foreach ($batchIds as $batchId) {
+            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
+
+            if (empty($data)) {
+                Redis::connection(config('queue.batching.redis_connection', 'default'))->lrem('batches_list', 0, $batchId);
+                Log::debug("RedisBatchRepository - pruneBatches method - Batch ({$batchId}) does not exist.");
+                continue;
+            }
+
+            $batchData = json_decode($data, true);
+
+            $shouldBeDeleted = false;
+
+            $createdAt   = CarbonImmutable::createFromTimestamp($batchData['created_at']);
+            $finishedAt  = isset($batchData['finished_at']) ? CarbonImmutable::createFromTimestamp($batchData['finished_at']) : null;
+            $cancelledAt = isset($batchData['cancelled_at']) ? CarbonImmutable::createFromTimestamp($batchData['cancelled_at']) : null;
+
+            if ($isFinished === true && $finishedAt && $finishedAt < $before) {
+                $shouldBeDeleted = true;
+            } elseif ($isFinished === false && ! $finishedAt && $createdAt < $before) {
+                $shouldBeDeleted = true;
+            } elseif ($isCancelled && $cancelledAt && $createdAt < $before) {
+                $shouldBeDeleted = true;
+            }
+
+            if ($shouldBeDeleted) {
+                Redis::connection(config('queue.batching.redis_connection', 'default'))->del("batch:{$batchId}");
+                Redis::connection(config('queue.batching.redis_connection', 'default'))->lrem('batches_list', 0, $batchId);
+                $totalDeleted++;
+            }
+        }
+
+        return $totalDeleted;
     }
 }

@@ -18,7 +18,8 @@
     "illuminate/bus": "^10.0",
     "illuminate/database": "^10.0",
     "illuminate/redis": "^10.0",
-    "ext-redis": "*"
+    "ext-redis": "*",
+    "laravel/pint": "^1.14"
   },
   "extra": {
     "laravel": {
