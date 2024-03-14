@@ -6,7 +6,8 @@ The Laravel Batch Jobs Redis Driver offers a performance-optimized alternative f
 
 ## Fully compatible with Laravel Horizon Batch overview:
 
--- will add image here
+![CleanShot 2024-03-14 at 23 28 38@2x](https://github.com/cyppe/laravel-batch-jobs-redis-driver/assets/591720/678804d5-6758-4a6c-86e2-3205435d0568)
+
 
 ## Installation
 
