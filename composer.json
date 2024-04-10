@@ -14,11 +14,7 @@
   ],
   "require": {
     "php": "^8.0",
-    "illuminate/support": "^10.0",
-    "illuminate/bus": "^10.0",
-    "illuminate/database": "^10.0",
-    "illuminate/redis": "^10.0",
-    "ext-redis": "*",
+    "laravel/framework": "^10.*|^11.*",
     "laravel/pint": "^1.14"
   },
   "extra": {
