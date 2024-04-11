@@ -51,6 +51,7 @@
             "import_functions": true
         },
         "is_null": true,
+        "no_unused_imports": true,
         "lambda_not_used_import": true,
         "logical_operators": true,
         "mb_str_functions": true,

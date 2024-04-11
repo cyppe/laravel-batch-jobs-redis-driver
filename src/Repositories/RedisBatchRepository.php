@@ -276,7 +276,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             if ($this->acquireLock($lockKey)) {
                 try {
                     if ($attempts > 5) {
-                        $this->debug( "finally got lock. Attempt: " . $attempts );
+                        $this->debug("finally got lock. Attempt: " . $attempts);
                     }
 
                     return $callback();
