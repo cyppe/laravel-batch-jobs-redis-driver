@@ -330,7 +330,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             $this->unserialize($batch['options']),
             CarbonImmutable::createFromTimestamp($batch['created_at']),
             isset($batch['cancelled_at']) ? CarbonImmutable::createFromTimestamp($batch['cancelled_at']) : null,
-            isset($batch['finished_at']) ? CarbonImmutable::createFromTimestamp($batch['finished_at']) : null
+            isset($batch['finished_at']) ? CarbonImmutable::createFromTimestamp($batch['finished_at']) : null,
         );
     }
 
