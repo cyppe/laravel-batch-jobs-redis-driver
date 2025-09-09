@@ -20,7 +20,7 @@ class CustomBusServiceProvider extends BusServiceProvider
                     $factory = $app->make(\Illuminate\Bus\BatchFactory::class);
 
                     return new RedisBatchRepository($factory);
-                }
+                },
             );
         } else {
             // Call the parent method to retain the default behavior

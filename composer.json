@@ -17,7 +17,9 @@
     "illuminate/support": "^10.0|^11.0|^12.0",
     "illuminate/bus": "^10.0|^11.0|^12.0",
     "illuminate/database": "^10.0|^11.0|^12.0",
-    "illuminate/redis": "^10.0|^11.0|^12.0",
+    "illuminate/redis": "^10.0|^11.0|^12.0"
+  },
+  "require-dev": {
     "laravel/pint": "^1.14"
   },
   "extra": {
