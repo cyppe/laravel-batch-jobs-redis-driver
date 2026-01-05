@@ -2,3 +2,5 @@ vendor
 composer.lock
 .bashrc
 .idea
+.php-cs-fixer.cache
+.phpstan-cache

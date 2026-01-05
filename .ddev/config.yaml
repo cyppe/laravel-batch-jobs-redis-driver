@@ -1,0 +1,19 @@
+name: laravel-batch-jobs-redis-driver
+type: generic
+docroot: .
+php_version: "8.4"
+webserver_type: generic
+omit_containers: [db]
+xdebug_enabled: false
+additional_hostnames: []
+additional_fqdns: []
+use_dns_when_possible: true
+composer_version: "2"
+web_environment:
+  - TERM=xterm-256color
+  - FORCE_COLOR=1
+corepack_enable: false
+
+hooks:
+  post-start:
+    - exec: composer install --optimize-autoloader

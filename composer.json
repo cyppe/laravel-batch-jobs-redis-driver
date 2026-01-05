@@ -14,13 +14,19 @@
   ],
   "require": {
     "php": "^8.1",
-    "illuminate/support": "^10.0|^11.0|^12.0",
-    "illuminate/bus": "^10.0|^11.0|^12.0",
-    "illuminate/database": "^10.0|^11.0|^12.0",
-    "illuminate/redis": "^10.0|^11.0|^12.0"
+    "laravel/framework": "^10.0|^11.0|^12.0",
+    "ext-redis": "*"
   },
   "require-dev": {
-    "laravel/pint": "^1.14"
+    "friendsofphp/php-cs-fixer": "^3.87",
+    "rector/rector": "^2.2.14",
+    "phpstan/phpstan": "^2.1",
+    "larastan/larastan": "^3.0",
+    "orchestra/testbench": "^10.8"
+  },
+  "scripts": {
+    "format": "php-cs-fixer fix --config=.php-cs-fixer.php",
+    "phpstan": "phpstan analyse"
   },
   "extra": {
     "laravel": {

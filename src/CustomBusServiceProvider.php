@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Cyppe\LaravelBatchJobsRedisDriver;
 
 use Cyppe\LaravelBatchJobsRedisDriver\Repositories\RedisBatchRepository;
