@@ -90,6 +90,7 @@ return (new Config())
         'ternary_to_null_coalescing' => true,
         'trim_array_spaces' => true,
         'use_arrow_functions' => false,
+        'static_lambda' => false,
         'void_return' => false,
         'yoda_style' => [
             'equal' => false,
