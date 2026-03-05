@@ -1,38 +1,38 @@
 {
-  "name": "cyppe/laravel-batch-jobs-redis-driver",
-  "description": "Redis driver for handling batch jobs in Laravel instead of default mysql table job_batches",
-  "autoload": {
-    "psr-4": {
-      "Cyppe\\LaravelBatchJobsRedisDriver\\": "src/"
+    "name": "cyppe/laravel-batch-jobs-redis-driver",
+    "description": "Redis driver for handling batch jobs in Laravel instead of default mysql table job_batches",
+    "autoload": {
+        "psr-4": {
+            "Cyppe\\LaravelBatchJobsRedisDriver\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "cyppe",
+            "email": "thomas.andersson@gmail.com"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "laravel/framework": "^10.0|^11.0|^12.0|^13.0",
+        "ext-redis": "*"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.87",
+        "rector/rector": "^2.2.14",
+        "phpstan/phpstan": "^2.1",
+        "larastan/larastan": "^3.0",
+        "orchestra/testbench": "^10.8|^11.0"
+    },
+    "scripts": {
+        "format": "php-cs-fixer fix --config=.php-cs-fixer.php",
+        "phpstan": "phpstan analyse"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Cyppe\\LaravelBatchJobsRedisDriver\\CustomBusServiceProvider"
+            ]
+        }
     }
-  },
-  "authors": [
-    {
-      "name": "cyppe",
-      "email": "thomas.andersson@gmail.com"
-    }
-  ],
-  "require": {
-    "php": "^8.1",
-    "laravel/framework": "^10.0|^11.0|^12.0",
-    "ext-redis": "*"
-  },
-  "require-dev": {
-    "friendsofphp/php-cs-fixer": "^3.87",
-    "rector/rector": "^2.2.14",
-    "phpstan/phpstan": "^2.1",
-    "larastan/larastan": "^3.0",
-    "orchestra/testbench": "^10.8"
-  },
-  "scripts": {
-    "format": "php-cs-fixer fix --config=.php-cs-fixer.php",
-    "phpstan": "phpstan analyse"
-  },
-  "extra": {
-    "laravel": {
-      "providers": [
-        "Cyppe\\LaravelBatchJobsRedisDriver\\CustomBusServiceProvider"
-      ]
-    }
-  }
 }
