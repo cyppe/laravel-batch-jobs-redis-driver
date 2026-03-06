@@ -34,7 +34,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
 
     public function get($limit = 50, $before = null): array
     {
-        if (! Redis::connection(config('queue.batching.redis_connection', 'default'))->exists('batches_list')) {
+        if ( ! Redis::connection(config('queue.batching.redis_connection', 'default'))->exists('batches_list')) {
             return [];
         }
 
@@ -72,7 +72,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         // Validation and logging for missing 'id' keys - temporary debug block
         // todo: remove this block when potential issue is verified
         foreach ($batchesRaw as $key => $data) {
-            if (! isset($data['id'])) {
+            if ( ! isset($data['id'])) {
                 $this->debug("get method - batch['id] is missing");
                 // Optionally, remove the invalid data to avoid further errors
                 //unset($batchesRaw[$key]);
@@ -216,7 +216,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
 
     public function delete(string $batchId)
     {
-        if (! Redis::connection(config('queue.batching.redis_connection', 'default'))->exists("batch:{$batchId}")) {
+        if ( ! Redis::connection(config('queue.batching.redis_connection', 'default'))->exists("batch:{$batchId}")) {
             // Handle the case where the batch does not exist
             return;
         }
@@ -272,6 +272,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
     protected function acquireLock(string $key): bool
     {
         $isAcquired = Redis::connection(config('queue.batching.redis_connection', 'default'))->client()->set($key, (string) true, ['EX' => $this->lockTimeout, 'NX']);
+
         return (bool) $isAcquired;
     }
 
@@ -330,7 +331,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
      */
     protected function toBatch($batch): Batch
     {
-        if (! isset($batch['id'])) {
+        if ( ! isset($batch['id'])) {
             $this->debug('toBatch method - Missing batch[id]');
         }
 
