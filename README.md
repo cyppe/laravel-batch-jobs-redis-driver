@@ -49,13 +49,13 @@ This driver counts each job's success, and its failure, once per job UUID, in on
 
 The UUIDs of the counted successes live in a Redis set `batch:{id}:succeeded_job_ids`, which has no TTL, like the batch itself, and is deleted with it by `delete()` and `queue:prune-batches`. A batch created before this version counts from its next recorded success on.
 
-If the worker that counted a batch's last job stops before Laravel marks the batch finished, the redelivered job finishes it and `then` runs. A worker that stops after the batch was marked finished but before `then` ran loses `then`, as it would with Laravel's own drivers.
+If the worker that counted a batch's last job stops before Laravel marks the batch finished, that job's redelivery finishes the batch and runs `then`, whether the redelivery succeeds or fails. Only the job whose success brought `pending_jobs` to 0 can do this. A worker that stops after the batch was marked finished but before `then` ran loses `then`, as it would with Laravel's own drivers.
 
-These guarantees assume the queue's `retry_after` is longer than the longest job runs, as Laravel requires. With a shorter `retry_after`, Laravel delivers a job again while it still runs, and two deliveries of a batch's last job can both run `then` and `finally`. The same goes for a batch cancelled at the moment its last job's worker stops: its redelivery does not run `then` or `finally` again.
+These guarantees assume a job is never delivered again while a worker still runs it: the queue's `retry_after` must be longer than the longest job runs, as Laravel requires, and longer than any stall of a worker. Otherwise two deliveries of a batch's last job can both run `then` and `finally`. A batch cancelled before its last job's worker stops is not finished by the redelivery: `then` and `finally` do not run for it.
 
 The count runs as one Lua script over the batch key and its set, so the batch connection must be a single Redis node (or a replica set), not Redis Cluster: the two keys can land in different cluster slots.
 
-With phpredis serialization or compression on the batch connection, use phpredis 5.3.5 or newer: older versions cannot pack a compressed value for the script without the separate `lzf`/`zstd` PHP extensions.
+With phpredis compression on the batch connection, use phpredis 5.3.5 or newer: older versions need the separate `lzf` or `zstd` PHP extension to pack a compressed value for the script, and cannot pack LZ4. A serializer alone works with any version.
 
 ## Pruning batches
 

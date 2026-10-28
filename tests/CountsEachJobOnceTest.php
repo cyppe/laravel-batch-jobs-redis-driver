@@ -66,6 +66,39 @@ class CountsEachJobOnceTest extends TestCase
         $this->assertSame(1, $this->fired('finally'));
     }
 
+    public function test_an_earlier_job_redelivered_while_the_last_job_finishes_the_batch_fires_nothing(): void
+    {
+        $batch = $this->dispatch($this->batchOf(2));
+        // A is counted and its worker dies; B's success brings pending_jobs to 0, and B's worker has not finished the batch yet.
+        app(BatchRepository::class)->decrementPendingJobs($batch->id, 'job-a');
+        app(BatchRepository::class)->decrementPendingJobs($batch->id, 'job-b');
+
+        $batch->recordSuccessfulJob('job-a');
+        $batch->recordFailedJob('job-a', new RuntimeException('max attempts exceeded'));
+
+        $this->assertFalse($batch->fresh()->finished());
+        $this->assertSame(0, $this->fired('then'));
+        $this->assertSame(0, $this->fired('finally'));
+    }
+
+    public function test_a_redelivered_last_job_that_fails_still_finishes_the_batch_its_success_completed(): void
+    {
+        $batch = $this->dispatch($this->batchOf(2));
+        $batch->recordSuccessfulJob('job-a');
+        // B's success is counted, then its worker throws before the batch is finished, and B fails on its last attempt.
+        app(BatchRepository::class)->decrementPendingJobs($batch->id, 'job-b');
+
+        $batch->recordFailedJob('job-b', new RuntimeException('max attempts exceeded'));
+
+        $fresh = $batch->fresh();
+        $this->assertTrue($fresh->finished());
+        $this->assertSame(0, $fresh->failedJobs);
+        $this->assertFalse($fresh->cancelled());
+        $this->assertSame(1, $this->fired('then'));
+        $this->assertSame(1, $this->fired('finally'));
+        $this->assertSame(0, $this->fired('catch'));
+    }
+
     public function test_a_success_redelivered_after_the_batch_finished_fires_nothing_again(): void
     {
         $batch = $this->dispatch($this->batchOf(2));
@@ -227,7 +260,7 @@ class CountsEachJobOnceTest extends TestCase
         $batch  = $this->dispatch($this->batchOf(2));
         $script = (new ReflectionClassConstant(RedisBatchRepository::class, 'COUNT_JOB_ONCE_SCRIPT'))->getValue();
         $redis  = Redis::connection();
-        $read   = $redis->get("batch:{$batch->id}");
+        [$read] = $redis->pack([$redis->get("batch:{$batch->id}")]);
         $batch->recordSuccessfulJob('job-b');
 
         $written = $redis->eval($script, 2, "batch:{$batch->id}", $this->succeededJobIdsKey($batch), $read, '{"stale":true}', 'job-a', 'success');

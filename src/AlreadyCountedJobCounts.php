@@ -15,17 +15,12 @@ use Illuminate\Bus\UpdatedBatchJobCounts;
  */
 class AlreadyCountedJobCounts extends UpdatedBatchJobCounts
 {
-    public function __construct(int $pendingJobs, int $failedJobs, public readonly bool $batchFinished)
+    /**
+     * @param bool $finishesBatch this job's success brought pending_jobs to 0, but the batch was never
+     *                            marked finished: its worker stopped before Laravel finished the batch
+     */
+    public function __construct(int $pendingJobs, int $failedJobs, public readonly bool $finishesBatch)
     {
         parent::__construct($pendingJobs, $failedJobs);
-    }
-
-    /**
-     * Whether every job was counted but the batch was never marked finished: the worker that counted
-     * the last job stopped before Laravel marked the batch finished and ran `then`.
-     */
-    public function batchLeftUnfinished(): bool
-    {
-        return $this->pendingJobs === 0 && ! $this->batchFinished;
     }
 }

@@ -208,6 +208,11 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             // Check if pending_jobs is greater than 0 before decrementing
             if ($batchData['pending_jobs'] > 0) {
                 $batchData['pending_jobs']--;
+
+                if ($batchData['pending_jobs'] === 0) {
+                    // Only this job's redelivery may finish a batch its worker left unfinished.
+                    $batchData['finishing_job_id'] = $jobId;
+                }
             } else {
                 // Will remove later - keeping for debug for now to see if it ever happens
                 $this->debug("decrementPendingJobs method - Attempted to decrement pending_jobs below 0 for batch: " . $batchId);
@@ -327,7 +332,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
                 $updated                     = $count($batchData);
 
                 if ($updated === null) {
-                    return $this->alreadyCounted($batchData);
+                    return $this->alreadyCounted($batchData, $jobId);
                 }
 
                 // The script compares and writes the stored bytes, so the JSON goes in packed like set() packs it.
@@ -339,7 +344,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
                 }
 
                 if ($written === 0) {
-                    return $this->alreadyCounted($batchData);
+                    return $this->alreadyCounted($batchData, $jobId);
                 }
 
                 if ($written !== -1) {
@@ -356,9 +361,13 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
     /**
      * @param array<string, mixed> $batchData
      */
-    protected function alreadyCounted(array $batchData): AlreadyCountedJobCounts
+    protected function alreadyCounted(array $batchData, string $jobId): AlreadyCountedJobCounts
     {
-        return new AlreadyCountedJobCounts($batchData['pending_jobs'], $batchData['failed_jobs'], isset($batchData['finished_at']));
+        $finishesBatch = $batchData['pending_jobs'] === 0
+            && ! isset($batchData['finished_at'])
+            && ($batchData['finishing_job_id'] ?? null) === $jobId;
+
+        return new AlreadyCountedJobCounts($batchData['pending_jobs'], $batchData['failed_jobs'], $finishesBatch);
     }
 
     /**

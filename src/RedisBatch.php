@@ -14,8 +14,9 @@ use Illuminate\Bus\UpdatedBatchJobCounts;
  * callbacks, so `then`, `catch` and `finally` fire once, after every job ran. Otherwise Laravel's
  * own bookkeeping runs unchanged, with the counts the repository just returned.
  *
- * One exception: when the last job's success was counted but the batch was never marked finished
- * (its worker stopped in between), the redelivered job finishes the batch, so `then` still runs.
+ * One exception: when the job whose success brought pending_jobs to 0 is delivered again and the
+ * batch was never marked finished (its worker stopped in between), that delivery finishes the
+ * batch as its success would have, whether it succeeds or fails this time, so `then` still runs.
  * Laravel marks the batch finished before it runs `then`, so a worker that stops after that point
  * still loses `then`, as it would without this package.
  */
@@ -30,17 +31,11 @@ class RedisBatch extends Batch
     {
         $counts = $this->repository->decrementPendingJobs($this->id, $jobId);
 
-        if ($counts instanceof AlreadyCountedJobCounts && ! $counts->batchLeftUnfinished()) {
+        if ($counts instanceof AlreadyCountedJobCounts && ! $counts->finishesBatch) {
             return;
         }
 
-        $this->countsBeingRecorded = $counts;
-
-        try {
-            parent::recordSuccessfulJob($jobId);
-        } finally {
-            $this->countsBeingRecorded = null;
-        }
+        $this->finishRecording($counts, fn() => parent::recordSuccessfulJob($jobId));
     }
 
     public function decrementPendingJobs(string $jobId)
@@ -53,21 +48,33 @@ class RedisBatch extends Batch
         $counts = $this->repository->incrementFailedJobs($this->id, $jobId);
 
         if ($counts instanceof AlreadyCountedJobCounts) {
+            if ($counts->finishesBatch) {
+                $this->finishRecording($counts, fn() => parent::recordSuccessfulJob($jobId));
+            }
+
             return;
         }
 
-        $this->countsBeingRecorded = $counts;
-
-        try {
-            parent::recordFailedJob($jobId, $e);
-        } finally {
-            $this->countsBeingRecorded = null;
-        }
+        $this->finishRecording($counts, fn() => parent::recordFailedJob($jobId, $e));
     }
 
     public function incrementFailedJobs(string $jobId)
     {
         return $this->takeCountsBeingRecorded() ?? parent::incrementFailedJobs($jobId);
+    }
+
+    /**
+     * Run Laravel's bookkeeping with the counts the repository already returned.
+     */
+    private function finishRecording(UpdatedBatchJobCounts $counts, callable $bookkeeping): void
+    {
+        $this->countsBeingRecorded = $counts;
+
+        try {
+            $bookkeeping();
+        } finally {
+            $this->countsBeingRecorded = null;
+        }
     }
 
     private function takeCountsBeingRecorded(): ?UpdatedBatchJobCounts
