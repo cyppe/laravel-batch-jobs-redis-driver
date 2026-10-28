@@ -48,6 +48,24 @@ class CountsEachJobOnceTest extends TestCase
         $this->assertSame(2, $this->fired('progress'));
     }
 
+    public function test_a_redelivered_last_job_finishes_a_batch_its_first_worker_left_unfinished(): void
+    {
+        $batch = $this->dispatch($this->batchOf(2));
+        $batch->recordSuccessfulJob('job-a');
+        // The last job's success is counted, then its worker stops before the batch is marked finished.
+        app(BatchRepository::class)->decrementPendingJobs($batch->id, 'job-b');
+
+        $this->assertSame(0, $batch->fresh()->pendingJobs);
+        $this->assertFalse($batch->fresh()->finished());
+
+        $batch->recordSuccessfulJob('job-b');
+        $batch->recordSuccessfulJob('job-b');
+
+        $this->assertTrue($batch->fresh()->finished());
+        $this->assertSame(1, $this->fired('then'));
+        $this->assertSame(1, $this->fired('finally'));
+    }
+
     public function test_a_success_redelivered_after_the_batch_finished_fires_nothing_again(): void
     {
         $batch = $this->dispatch($this->batchOf(2));

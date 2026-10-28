@@ -327,17 +327,23 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
                 $updated                     = $count($batchData);
 
                 if ($updated === null) {
-                    return new AlreadyCountedJobCounts($batchData['pending_jobs'], $batchData['failed_jobs']);
+                    return $this->alreadyCounted($batchData);
                 }
 
-                $written = (int) $redis->eval(static::COUNT_JOB_ONCE_SCRIPT, 2, "batch:{$batchId}", $this->succeededJobIdsKey($batchId), $data, json_encode($updated), $jobId, $outcome);
+                // The script compares and writes the stored bytes, so the JSON goes in packed like set() packs it.
+                [$expected, $replacement] = $redis->pack([$data, json_encode($updated, JSON_THROW_ON_ERROR)]);
+                $written                  = $redis->eval(static::COUNT_JOB_ONCE_SCRIPT, 2, "batch:{$batchId}", $this->succeededJobIdsKey($batchId), $expected, $replacement, $jobId, $outcome);
 
                 if ($written === 1) {
                     return new UpdatedBatchJobCounts($updated['pending_jobs'], $updated['failed_jobs']);
                 }
 
                 if ($written === 0) {
-                    return new AlreadyCountedJobCounts($batchData['pending_jobs'], $batchData['failed_jobs']);
+                    return $this->alreadyCounted($batchData);
+                }
+
+                if ($written !== -1) {
+                    throw new RuntimeException("RedisBatchRepository - Counting job {$jobId} of batch {$batchId} failed: " . ($redis->client()->getLastError() ?? 'unexpected script result'));
                 }
 
                 $this->debug("countJobOnce method - Batch ({$batchId}) changed while counting job ({$jobId}), attempt {$attempt}.");
@@ -345,6 +351,14 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
 
             throw new RuntimeException("RedisBatchRepository - Batch {$batchId} kept changing while counting job {$jobId}");
         }, 200, 200);
+    }
+
+    /**
+     * @param array<string, mixed> $batchData
+     */
+    protected function alreadyCounted(array $batchData): AlreadyCountedJobCounts
+    {
+        return new AlreadyCountedJobCounts($batchData['pending_jobs'], $batchData['failed_jobs'], isset($batchData['finished_at']));
     }
 
     /**

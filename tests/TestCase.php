@@ -17,7 +17,7 @@ abstract class TestCase extends Orchestra
     {
         parent::setUp();
 
-        Redis::connection()->flushdb();
+        $this->deleteTestKeys();
     }
 
     protected function getPackageProviders($app): array
@@ -37,5 +37,18 @@ abstract class TestCase extends Orchestra
             'port'     => env('REDIS_PORT', 6379),
             'database' => env('REDIS_DB', 15),
         ]);
+    }
+
+    /**
+     * Delete only this suite's keys: the prefix confines them, and a shared database keeps its other keys.
+     */
+    private function deleteTestKeys(): void
+    {
+        $redis  = Redis::connection();
+        $prefix = (string) $redis->client()->getOption(\Redis::OPT_PREFIX);
+
+        foreach ($redis->keys('*') as $key) {
+            $redis->del(substr($key, strlen($prefix)));
+        }
     }
 }

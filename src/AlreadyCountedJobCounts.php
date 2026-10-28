@@ -13,4 +13,19 @@ use Illuminate\Bus\UpdatedBatchJobCounts;
  * outcome and before deleting the job) records its outcome again; the repository then changes
  * nothing and returns this, so RedisBatch runs no callbacks for it.
  */
-class AlreadyCountedJobCounts extends UpdatedBatchJobCounts {}
+class AlreadyCountedJobCounts extends UpdatedBatchJobCounts
+{
+    public function __construct(int $pendingJobs, int $failedJobs, public readonly bool $batchFinished)
+    {
+        parent::__construct($pendingJobs, $failedJobs);
+    }
+
+    /**
+     * Whether every job was counted but the batch was never marked finished: the worker that counted
+     * the last job stopped before Laravel marked the batch finished and ran `then`.
+     */
+    public function batchLeftUnfinished(): bool
+    {
+        return $this->pendingJobs === 0 && ! $this->batchFinished;
+    }
+}

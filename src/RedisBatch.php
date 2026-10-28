@@ -13,6 +13,11 @@ use Illuminate\Bus\UpdatedBatchJobCounts;
  * When the repository reports the job as already counted, the batch records nothing and runs no
  * callbacks, so `then`, `catch` and `finally` fire once, after every job ran. Otherwise Laravel's
  * own bookkeeping runs unchanged, with the counts the repository just returned.
+ *
+ * One exception: when the last job's success was counted but the batch was never marked finished
+ * (its worker stopped in between), the redelivered job finishes the batch, so `then` still runs.
+ * Laravel marks the batch finished before it runs `then`, so a worker that stops after that point
+ * still loses `then`, as it would without this package.
  */
 class RedisBatch extends Batch
 {
@@ -25,7 +30,7 @@ class RedisBatch extends Batch
     {
         $counts = $this->repository->decrementPendingJobs($this->id, $jobId);
 
-        if ($counts instanceof AlreadyCountedJobCounts) {
+        if ($counts instanceof AlreadyCountedJobCounts && ! $counts->batchLeftUnfinished()) {
             return;
         }
 

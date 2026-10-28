@@ -49,6 +49,10 @@ This driver counts each job's success, and its failure, once per job UUID, in on
 
 The UUIDs of the counted successes live in a Redis set `batch:{id}:succeeded_job_ids`, which has no TTL, like the batch itself, and is deleted with it by `delete()` and `queue:prune-batches`. A batch created before this version counts from its next recorded success on.
 
+If the worker that counted a batch's last job stops before Laravel marks the batch finished, the redelivered job finishes it and `then` runs. A worker that stops after the batch was marked finished but before `then` ran loses `then`, as it would with Laravel's own drivers.
+
+The count runs as one Lua script over the batch key and its set, so the batch connection must be a single Redis node (or a replica set), not Redis Cluster: the two keys can land in different cluster slots.
+
 ## Pruning batches
 
 It fully supports pruning of batches with default Laravel command:
