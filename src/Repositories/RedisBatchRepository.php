@@ -7,6 +7,7 @@ namespace Cyppe\LaravelBatchJobsRedisDriver\Repositories;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Closure;
+use Cyppe\LaravelBatchJobsRedisDriver\AlreadyCountedJobCounts;
 use DateTimeInterface;
 use Illuminate\Bus\Batch;
 use Illuminate\Bus\BatchFactory;
@@ -15,6 +16,7 @@ use Illuminate\Bus\DatabaseBatchRepository;
 use Illuminate\Bus\PendingBatch;
 use Illuminate\Bus\PrunableBatchRepository;
 use Illuminate\Bus\UpdatedBatchJobCounts;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
@@ -23,6 +25,34 @@ use Throwable;
 
 class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepository, PrunableBatchRepository
 {
+    protected const SUCCESS = 'success';
+    protected const FAILURE = 'failure';
+
+    /**
+     * Writes a job's counted outcome to the batch in one atomic step.
+     *
+     * KEYS[1] is the batch, KEYS[2] the set of job UUIDs whose success was counted. ARGV holds the
+     * batch JSON the caller read, the updated JSON, the job UUID and the outcome. It returns -1 when
+     * the batch changed since the caller read it, 0 when the job was already counted, 1 when written.
+     */
+    protected const COUNT_JOB_ONCE_SCRIPT = <<<'LUA'
+        if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+            return -1
+        end
+
+        if ARGV[4] == 'success' then
+            if redis.call('SADD', KEYS[2], ARGV[3]) == 0 then
+                return 0
+            end
+        elseif redis.call('SISMEMBER', KEYS[2], ARGV[3]) == 1 then
+            return 0
+        end
+
+        redis.call('SET', KEYS[1], ARGV[2])
+
+        return 1
+        LUA;
+
     protected int $lockTimeout;
     protected $factory;
 
@@ -146,47 +176,52 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
         }, 200, 200);
     }
 
+    /**
+     * Count the job's failure once per job UUID.
+     *
+     * A job already in failed_job_ids, or whose success was already counted, changes nothing: a job
+     * redelivered after its success can fail on max attempts, and must not cancel the batch.
+     */
     public function incrementFailedJobs(string $batchId, string $jobId)
     {
-        return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId, $jobId) {
-            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
-            if (empty($data)) {
-                $this->debug("incrementFailedJobs method - Batch ({$batchId}) does not exist.");
-
-                return new UpdatedBatchJobCounts(0, 0);
+        return $this->countJobOnce($batchId, $jobId, self::FAILURE, function (array $batchData) use ($jobId): ?array {
+            if (in_array($jobId, $batchData['failed_job_ids'], true)) {
+                return null;
             }
-            $batchData = json_decode($data, true);
+
             $batchData['failed_jobs']++;
             $batchData['failed_job_ids'][] = $jobId;
-            Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$batchId}", json_encode($batchData));
 
-            return new UpdatedBatchJobCounts($batchData['pending_jobs'], $batchData['failed_jobs']);
-        }, 200, 200);
+            return $batchData;
+        });
     }
 
+    /**
+     * Count the job's success once per job UUID, and take it out of failed_job_ids as Laravel does.
+     *
+     * A second success of the same job (a redelivery after its worker died before deleting it)
+     * changes nothing, so pending_jobs cannot reach 0 while another job of the batch has not run.
+     */
     public function decrementPendingJobs(string $batchId, string $jobId)
     {
-        return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId) {
-            $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
-            if (empty($data)) {
-                $this->debug("decrementPendingJobs method - Batch ({$batchId}) does not exist.");
-
-                return new UpdatedBatchJobCounts(0, 0);
-            }
-            $batchData = json_decode($data, true);
-
+        return $this->countJobOnce($batchId, $jobId, self::SUCCESS, function (array $batchData) use ($batchId, $jobId): array {
             // Check if pending_jobs is greater than 0 before decrementing
             if ($batchData['pending_jobs'] > 0) {
                 $batchData['pending_jobs']--;
+
+                if ($batchData['pending_jobs'] === 0) {
+                    // Only this job's redelivery may finish a batch its worker left unfinished.
+                    $batchData['finishing_job_id'] = $jobId;
+                }
             } else {
                 // Will remove later - keeping for debug for now to see if it ever happens
                 $this->debug("decrementPendingJobs method - Attempted to decrement pending_jobs below 0 for batch: " . $batchId);
             }
 
-            Redis::connection(config('queue.batching.redis_connection', 'default'))->set("batch:{$batchId}", json_encode($batchData));
+            $batchData['failed_job_ids'] = array_values(array_diff($batchData['failed_job_ids'], [$jobId]));
 
-            return new UpdatedBatchJobCounts($batchData['pending_jobs'], $batchData['failed_jobs']);
-        }, 200, 200);
+            return $batchData;
+        });
     }
 
     public function markAsFinished(string $batchId): void
@@ -221,7 +256,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             return;
         }
 
-        Redis::connection(config('queue.batching.redis_connection', 'default'))->del("batch:{$batchId}");
+        Redis::connection(config('queue.batching.redis_connection', 'default'))->del("batch:{$batchId}", $this->succeededJobIdsKey($batchId));
         Redis::connection(config('queue.batching.redis_connection', 'default'))->client()->lrem('batches_list', $batchId, (int) 0);
     }
 
@@ -268,6 +303,81 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
      * @return void
      */
     public function rollBack() {}
+
+    /**
+     * Apply a job's success or failure to the batch, once per job UUID.
+     *
+     * The batch lock keeps other writers out. The script also writes only if the batch is still what
+     * was read, so even past an expired lock two counts cannot overwrite each other. A batch created
+     * before this set existed counts from its next recorded success on; earlier ones are not in it.
+     *
+     * @param Closure(array<string, mixed>): ?array<string, mixed> $count the updated batch data, or null when the job was already counted
+     */
+    protected function countJobOnce(string $batchId, string $jobId, string $outcome, Closure $count): UpdatedBatchJobCounts
+    {
+        return $this->executeWithLock("lock:batch:{$batchId}", function () use ($batchId, $jobId, $outcome, $count) {
+            /** @var PhpRedisConnection $redis the package requires phpredis (ext-redis) */
+            $redis = Redis::connection(config('queue.batching.redis_connection', 'default'));
+
+            for ($attempt = 1; $attempt <= 3; $attempt++) {
+                $data = $redis->get("batch:{$batchId}");
+                if (empty($data)) {
+                    $this->debug("countJobOnce method - Batch ({$batchId}) does not exist.");
+
+                    return new UpdatedBatchJobCounts(0, 0);
+                }
+
+                $batchData                   = json_decode($data, true);
+                $batchData['failed_job_ids'] = (array) ($batchData['failed_job_ids'] ?? []);
+                $updated                     = $count($batchData);
+
+                if ($updated === null) {
+                    return $this->alreadyCounted($batchData, $jobId);
+                }
+
+                // The script compares and writes the stored bytes, so the JSON goes in packed like set() packs it.
+                [$expected, $replacement] = $redis->pack([$data, json_encode($updated, JSON_THROW_ON_ERROR)]);
+                $written                  = $redis->eval(static::COUNT_JOB_ONCE_SCRIPT, 2, "batch:{$batchId}", $this->succeededJobIdsKey($batchId), $expected, $replacement, $jobId, $outcome);
+
+                if ($written === 1) {
+                    return new UpdatedBatchJobCounts($updated['pending_jobs'], $updated['failed_jobs']);
+                }
+
+                if ($written === 0) {
+                    return $this->alreadyCounted($batchData, $jobId);
+                }
+
+                if ($written !== -1) {
+                    throw new RuntimeException("RedisBatchRepository - Counting job {$jobId} of batch {$batchId} failed: " . ($redis->client()->getLastError() ?? 'unexpected script result'));
+                }
+
+                $this->debug("countJobOnce method - Batch ({$batchId}) changed while counting job ({$jobId}), attempt {$attempt}.");
+            }
+
+            throw new RuntimeException("RedisBatchRepository - Batch {$batchId} kept changing while counting job {$jobId}");
+        }, 200, 200);
+    }
+
+    /**
+     * @param array<string, mixed> $batchData
+     */
+    protected function alreadyCounted(array $batchData, string $jobId): AlreadyCountedJobCounts
+    {
+        $finishesBatch = $batchData['pending_jobs'] === 0
+            && ! isset($batchData['finished_at'])
+            && ($batchData['finishing_job_id'] ?? null) === $jobId;
+
+        return new AlreadyCountedJobCounts($batchData['pending_jobs'], $batchData['failed_jobs'], $finishesBatch);
+    }
+
+    /**
+     * The set of job UUIDs whose success the batch counted. It has no TTL, like the batch, and is
+     * deleted with it.
+     */
+    protected function succeededJobIdsKey(string $batchId): string
+    {
+        return "batch:{$batchId}:succeeded_job_ids";
+    }
 
     protected function acquireLock(string $key): bool
     {
@@ -359,6 +469,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             $data = Redis::connection(config('queue.batching.redis_connection', 'default'))->get("batch:{$batchId}");
 
             if (empty($data)) {
+                Redis::connection(config('queue.batching.redis_connection', 'default'))->del($this->succeededJobIdsKey($batchId));
                 Redis::connection(config('queue.batching.redis_connection', 'default'))->client()->lrem('batches_list', $batchId, (int) 0);
                 $this->debug("pruneBatches method - Batch ({$batchId}) does not exist.");
                 continue;
@@ -381,7 +492,7 @@ class RedisBatchRepository extends DatabaseBatchRepository implements BatchRepos
             }
 
             if ($shouldBeDeleted) {
-                Redis::connection(config('queue.batching.redis_connection', 'default'))->del("batch:{$batchId}");
+                Redis::connection(config('queue.batching.redis_connection', 'default'))->del("batch:{$batchId}", $this->succeededJobIdsKey($batchId));
                 Redis::connection(config('queue.batching.redis_connection', 'default'))->client()->lrem('batches_list', $batchId, (int) 0);
                 $totalDeleted++;
             }

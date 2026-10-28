@@ -19,7 +19,7 @@ class CustomBusServiceProvider extends BusServiceProvider
             $this->app->singleton(
                 BatchRepository::class,
                 function ($app) {
-                    $factory = $app->make(\Illuminate\Bus\BatchFactory::class);
+                    $factory = $app->make(RedisBatchFactory::class);
 
                     return new RedisBatchRepository($factory);
                 },
