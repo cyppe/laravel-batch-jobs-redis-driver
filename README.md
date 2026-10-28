@@ -49,9 +49,9 @@ This driver counts each job's success, and its failure, once per job UUID, in on
 
 The UUIDs of the counted successes live in a Redis set `batch:{id}:succeeded_job_ids`, which has no TTL, like the batch itself, and is deleted with it by `delete()` and `queue:prune-batches`. A batch created before this version counts from its next recorded success on.
 
-If the worker that counted a batch's last job stops before Laravel marks the batch finished, that job's redelivery finishes the batch and runs `then`, whether the redelivery succeeds or fails. Only the job whose success brought `pending_jobs` to 0 can do this. A worker that stops after the batch was marked finished but before `then` ran loses `then`, as it would with Laravel's own drivers.
+If the worker that counted a batch's last job stops before Laravel marks the batch finished, that job's redelivery finishes the batch and runs `then`, whether the redelivery succeeds or fails. Only the job whose success brought `pending_jobs` to 0 can do this. A redelivery that fails is still logged as a failed job, and the job's own `failed()` method runs after `then`. A worker that stops after the batch was marked finished but before `then` ran loses `then`, as it would with Laravel's own drivers.
 
-These guarantees assume a job is never delivered again while a worker still runs it: the queue's `retry_after` must be longer than the longest job runs, as Laravel requires, and longer than any stall of a worker. Otherwise two deliveries of a batch's last job can both run `then` and `finally`. A batch cancelled before its last job's worker stops is not finished by the redelivery: `then` and `finally` do not run for it.
+These guarantees assume a job is never delivered again while a worker still runs it: the worker's `timeout` must be shorter than the queue's `retry_after`, as Laravel requires, so a stuck or stalled worker is killed before its job is delivered again. Otherwise two deliveries of a batch's last job can both run `then` and `finally`. A batch cancelled before its last job's worker stops is not finished by the redelivery: `then` and `finally` do not run for it.
 
 The count runs as one Lua script over the batch key and its set, so the batch connection must be a single Redis node (or a replica set), not Redis Cluster: the two keys can land in different cluster slots.
 
