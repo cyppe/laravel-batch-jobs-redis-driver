@@ -51,7 +51,11 @@ The UUIDs of the counted successes live in a Redis set `batch:{id}:succeeded_job
 
 If the worker that counted a batch's last job stops before Laravel marks the batch finished, the redelivered job finishes it and `then` runs. A worker that stops after the batch was marked finished but before `then` ran loses `then`, as it would with Laravel's own drivers.
 
+These guarantees assume the queue's `retry_after` is longer than the longest job runs, as Laravel requires. With a shorter `retry_after`, Laravel delivers a job again while it still runs, and two deliveries of a batch's last job can both run `then` and `finally`. The same goes for a batch cancelled at the moment its last job's worker stops: its redelivery does not run `then` or `finally` again.
+
 The count runs as one Lua script over the batch key and its set, so the batch connection must be a single Redis node (or a replica set), not Redis Cluster: the two keys can land in different cluster slots.
+
+With phpredis serialization or compression on the batch connection, use phpredis 5.3.5 or newer: older versions cannot pack a compressed value for the script without the separate `lzf`/`zstd` PHP extensions.
 
 ## Pruning batches
 
