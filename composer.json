@@ -26,13 +26,19 @@
   },
   "scripts": {
     "format": "php-cs-fixer fix --config=.php-cs-fixer.php",
-    "phpstan": "phpstan analyse"
+    "phpstan": "phpstan analyse",
+    "test": "phpunit"
   },
   "extra": {
     "laravel": {
       "providers": [
         "Cyppe\\LaravelBatchJobsRedisDriver\\CustomBusServiceProvider"
       ]
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Cyppe\\LaravelBatchJobsRedisDriver\\Tests\\": "tests/"
     }
   }
 }

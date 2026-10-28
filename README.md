@@ -36,6 +36,19 @@ Set the `database` key under the `batching` section to `'redis'`. Without this a
 
 Ensure that your Redis connection is correctly configured in Laravel to use this driver effectively.
 
+## Each job counts once
+
+A queued job can be delivered twice: its worker records the job's success, then dies before it deletes the job, and the job runs again after `retry_after`. Laravel then records the same job's success twice, and in the database driver `pending_jobs` drops twice, so `then` can fire while another job of the batch has not run yet.
+
+This driver counts each job's success, and its failure, once per job UUID, in one atomic Redis step:
+
+- A second success of the same job changes nothing and runs no callbacks: `then`, `catch` and `finally` fire once, after every job ran.
+- A job recorded as failed twice counts as one failed job.
+- A failed job that later succeeds (for example through `queue:retry`) lowers `pending_jobs` once and leaves `failed_job_ids`, as in Laravel.
+- A failure recorded after the same job's success was counted (a redelivery that then exceeds its max attempts) is ignored.
+
+The UUIDs of the counted successes live in a Redis set `batch:{id}:succeeded_job_ids`, which has no TTL, like the batch itself, and is deleted with it by `delete()` and `queue:prune-batches`. A batch created before this version counts from its next recorded success on.
+
 ## Pruning batches
 
 It fully supports pruning of batches with default Laravel command:
